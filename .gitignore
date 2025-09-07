@@ -1,0 +1,37 @@
+# === OS / IDE ===
+.DS_Store
+Thumbs.db
+*.iml
+.idea/
+.vscode/
+
+# === Java / Spring Boot ===
+target/
+build/
+out/
+*.log
+.gradle/
+!.mvn/wrapper/maven-wrapper.jar
+mvnw.cmd
+mvnw
+.gradle/
+**/application-local.yml
+**/application-local.properties
+
+# === Node / React ===
+node_modules/
+dist/
+build/
+.cache/
+.vite/
+.next/
+*.local
+
+# === Env / secrets ===
+.env
+.env.*
+!.env.example
+
+# === Others ===
+*.jar
+*.war
