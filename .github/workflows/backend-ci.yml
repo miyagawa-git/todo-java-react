@@ -13,13 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: backend
+        working-directory: todo-backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
       - name: Build
         run: ./gradlew build -x test
       - name: Test
