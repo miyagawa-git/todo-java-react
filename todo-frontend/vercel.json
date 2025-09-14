@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "https://todo-java-react.onrender.com/$1" },
+    { "source": "/(.*)", "destination": "/" }
+  ]
+}
