@@ -22,5 +22,5 @@ WORKDIR /app
 ENV SPRING_PROFILES_ACTIVE=prod \
     JAVA_OPTS=""
 EXPOSE 8081
-COPY --from=build /app/build/libs/*-SNAPSHOT.jar /app/app.jar
+COPY --from=build /app/build/libs/app.jar /app/app.jar
 ENTRYPOINT ["sh","-c","java $JAVA_OPTS -jar /app/app.jar"]
