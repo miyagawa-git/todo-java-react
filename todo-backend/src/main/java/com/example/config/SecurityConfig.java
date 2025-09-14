@@ -43,7 +43,10 @@ public SecurityConfig(CustomUserDetailsService uds, JwtService jwt) {
       .csrf(csrf -> csrf.disable())
       .cors(cors -> cors.configurationSource(req -> {
         CorsConfiguration c = new CorsConfiguration();
-        c.setAllowedOrigins(List.of("http://localhost:5173"));
+        c.setAllowedOriginPatterns(List.of(
+            "https://*.vercel.app",         // Vercel preview & production
+            "http://localhost:5173"         // 開発用(Vite等)
+        ));
         c.setAllowedMethods(List.of("GET","POST","PUT","DELETE","OPTIONS"));
         c.setAllowedHeaders(List.of("*"));
         c.setAllowCredentials(true);
@@ -51,6 +54,8 @@ public SecurityConfig(CustomUserDetailsService uds, JwtService jwt) {
       }))
       .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
       .authorizeHttpRequests(auth -> auth
+         // プリフライト許可
+        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
         .requestMatchers("/auth/**", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
 //        .anyRequest().permitAll()
         .anyRequest().authenticated()
