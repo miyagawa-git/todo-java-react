@@ -1,0 +1,17 @@
+# OS / IDE
+.vscode/
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Gradle build cache / 出力
+.gradle/
+build/
+**/build/
+
+# すべての JAR は基本除外（コンテキストを軽くする）
+**/*.jar
+
+# ただし Gradle wrapper は必ず含める（最後に書く）
+!gradle/wrapper/gradle-wrapper.jar
