@@ -2,8 +2,8 @@
 FROM gradle:8.8-jdk21 AS build
 WORKDIR /app
 # 1) まず wrapper と設定だけコピー（キャッシュ効かせる）
-COPY build.gradle settings.gradle gradlew gradle/ ./
-
+#COPY build.gradle settings.gradle gradlew gradle/ ./
+COPY build.gradle settings.gradle ./
 # 2) gradlew の改行をLF化＆実行権限付与 
 RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
 
