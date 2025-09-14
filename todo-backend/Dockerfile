@@ -3,18 +3,18 @@ FROM gradle:8.8-jdk21 AS build
 WORKDIR /app
 # 1) まず wrapper と設定だけコピー（キャッシュ効かせる）
 #COPY build.gradle settings.gradle gradlew gradle/ ./
-COPY build.gradle settings.gradle ./
 # 2) gradlew の改行をLF化＆実行権限付与 
 RUN sed -i 's/\r$//' gradlew && chmod +x gradlew
+COPY build.gradle settings.gradle ./
 
 # 動作確認（任意）
-RUN ./gradlew --version
+RUN gradle --version
 
 # 3) 残りのソース
 COPY src ./src
 
 # 4) ビルド
-RUN ./gradlew clean bootJar -x test
+RUN gradlew clean bootJar -x test
 
 # ---- Run stage ----
 FROM eclipse-temurin:21-jre
