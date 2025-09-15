@@ -68,39 +68,64 @@ public SecurityConfig(CustomUserDetailsService uds, JwtService jwt) {
   @Bean
   public PasswordEncoder passwordEncoder(){ return new BCryptPasswordEncoder(); }
 
-  @Bean
-  public OncePerRequestFilter jwtAuthFilter() {
-    return new OncePerRequestFilter() {
-      @Override
-      protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
-          throws ServletException, IOException {
-        String h = req.getHeader("Authorization");
+@Bean
+public OncePerRequestFilter jwtAuthFilter() {
+  return new OncePerRequestFilter() {
+    @Override
+    protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
+        throws ServletException, IOException {
 
-        if (h != null && h.startsWith("Bearer ")) {
-          String token = h.substring(7);
-          try {
-            String username = jwt.extractUsername(token);
-            if (username != null && SecurityContextHolder.getContext().getAuthentication()==null) {
-              UserDetails ud = uds.loadUserByUsername(username);
-              UsernamePasswordAuthenticationToken auth =
-                new UsernamePasswordAuthenticationToken(ud, null, ud.getAuthorities());
-              auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(req));
-              SecurityContextHolder.getContext().setAuthentication(auth);
-              System.out.println("Authorization header: " + h);
-              System.out.println("Username from token: " + username);
-              System.out.println("UserDetails found: " + ud);
-            }
-            //ExpiredJwtException(期限切れ)を捕まえたら401を返してchainを進めないように
-          } catch (io.jsonwebtoken.ExpiredJwtException e) {
-              res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-              res.setHeader("WWW-Authenticate",
-                "Bearer error=\"invalid_token\", error_description=\"expired\"");
-              return; 
-          }  catch (Exception ignored) {ignored.printStackTrace();}
-          
+      // ---- 1) 素通し対象（公開パス／Swagger／静的ファイル／プリフライト）----
+      final String path = req.getServletPath();
+      if ("OPTIONS".equalsIgnoreCase(req.getMethod())
+          || path.startsWith("/auth/")
+          || path.startsWith("/v3/api-docs")
+          || path.startsWith("/swagger-ui")
+          || path.equals("/")
+          || path.equals("/index.html")
+          || path.startsWith("/assets/")    // Viteの静的
+          || path.startsWith("/static/")    
+          || path.equals("/favicon.ico")) {
+        chain.doFilter(req, res);
+        return;
+      }
+
+      // ---- 2) Authorizationが無ければ何もせず次へ（匿名のままSecurityへ）----
+      final String h = req.getHeader("Authorization");
+      if (h == null || !h.startsWith("Bearer ")) {
+        chain.doFilter(req, res);
+        return;
+      }
+
+      // ---- 3) Bearerがあるときだけトークン検証し、OKなら認証をセット ----
+      try {
+        final String token = h.substring(7);
+        final String username = jwt.extractUsername(token);
+
+        if (username != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+          UserDetails ud = uds.loadUserByUsername(username);
+          UsernamePasswordAuthenticationToken auth =
+              new UsernamePasswordAuthenticationToken(ud, null, ud.getAuthorities());
+          auth.setDetails(new WebAuthenticationDetailsSource().buildDetails(req));
+          SecurityContextHolder.getContext().setAuthentication(auth);
         }
         chain.doFilter(req, res);
+
+      } catch (io.jsonwebtoken.ExpiredJwtException e) {
+        // 期限切れは 401（再ログイン促し）
+        res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        res.setHeader("WWW-Authenticate",
+            "Bearer error=\"invalid_token\", error_description=\"expired\"");
+        // return でチェーンを止める
+      } catch (Exception e) {
+        // 署名不正など → 401 に統一（403を返さない）
+        res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        res.setHeader("WWW-Authenticate",
+            "Bearer error=\"invalid_token\", error_description=\"invalid or malformed\"");
+        // e.printStackTrace();
       }
-    };
-  }
+    }
+  };
+}
+
 }
