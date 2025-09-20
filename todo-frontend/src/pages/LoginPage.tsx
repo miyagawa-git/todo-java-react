@@ -15,6 +15,7 @@ export default function LoginPage() {
     // const res = await axios.post("/api/auth/login", d);
     const res = await http.post("/api/auth/login", d);
     localStorage.setItem("token", res.data.token);
+    localStorage.setItem("username", d.username);
     nav("/");
   };
    // 👁 表示・非表示を切り替える状態
@@ -32,26 +33,33 @@ export default function LoginPage() {
       className="mx-auto grid max-w-[800px] gap-3">
         <input 
         autoComplete="username"
-        placeholder="ユーザー名" {...register("username", { required: true })}className="w-full" />
-        {errors.username && <div>必須です</div>}
+        placeholder="ユーザー名" {...register("username", { required: "必須です" })}className="w-full" />
+        {errors.username && <p className="text-sm text-red-600">{errors.username.message}</p>}
 
          {/* パスワード */}
     <div className="space-y-1"> 
       <div className="relative w-full">
         <input type={showPassword ? "text" : "password"}
         autoComplete="current-password"
-        placeholder="パスワード" {...register("password", { required: true })} className="w-full"/>
-        {errors.password && <div>必須です</div>}
+        placeholder="パスワード"
+        className="w-full"
+        inputMode={"latin" as any}
+        pattern="[0-9A-Za-z]*"  
+        style={{ imeMode: "disabled" }}
+        {...register("password", {
+          required: "必須です",
+          minLength: { value: 8, message: "8文字以上にしてください" },
+        })}/>
 
 
-      {/* 👁 アイコン（ボタン） */}
-      <button
-        type="button"
-        onClick={() => setShowPassword((prev) => !prev)}
-        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500"
-      >
-        {showPassword ? <EyeOff /> : <Eye />}
-      </button>
+        {/* 👁 アイコン（ボタン） */}
+        <button
+          type="button"
+          onClick={() => setShowPassword((prev) => !prev)}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500"
+        >
+          {showPassword ? <EyeOff /> : <Eye />}
+        </button>
       </div>
       {errors.password && (
         <p className="text-sm text-red-600">{errors.password.message}</p>
@@ -64,7 +72,7 @@ export default function LoginPage() {
         
         <div className="flex justify-center">
         <Link to="/userRegist" className="btn text-center" role="button">
-          新規登録へ
+          新規登録
         </Link></div>
 
       </form>

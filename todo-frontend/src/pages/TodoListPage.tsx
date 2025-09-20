@@ -84,9 +84,9 @@ export default function TodoListPage() {
     p === 3 ? "高" : p === 2 ? "中" : p === 1 ? "低" : "なし";
 
   const priorityColor = (p?: number) =>
-    p === 3 ? "text-red-600" :
-    p === 2 ? "text-amber-600" :
-    p === 1 ? "text-muted-foreground" : "text-muted-foreground";
+    p === 3 ? "text-red-600 text-xl font-black" :
+    p === 2 ? "text-amber-600 text-xl font-black" :
+    p === 1 ? "text-muted-foreground text-xl font-black" : "text-muted-foreground text-xl";
 
 
   if (isLoading) return <div>Loading...</div>;
@@ -110,23 +110,30 @@ if (!token) return null;
       <div className="card">
       <ul>
         {data?.map(t => (
-          <li key={t.id} style={{ display:"flex", gap:8, alignItems:"center" }}>
-            <input type="checkbox" checked={t.done} onChange={() => toggleMutation.mutate(t)} />
+          <li key={t.id}
+            className="flex items-center gap-2 border-b border-gray-300 py-2 last:border-b-0"
+          >
+            <input type="checkbox" checked={t.done} 
+            className="w-6 h-6" onChange={() => toggleMutation.mutate(t)} />
             
             <span
               className={priorityColor(t.priority)}
               aria-label={`優先度: ${priorityLabel(t.priority)}`}
             >{priorityMarks(t.priority) /* 0→"" / 1→! / 2→!! / 3→!!! */}
             </span>
-            
-            <Link to={`/todos/${t.id}`}
-              style={ t.done ? { color: '#8895aa71', textDecoration: 'line-through' , fontSize: '1.5rem'} : { fontSize: '1.5rem' } }>
+           
+            <Link
+              to={`/todos/${t.id}`}
+              className={`text-[1.5rem] bg-white ${
+                t.done ? 'text-gray-400 line-through' : ''
+              }`}
+            >
               {t.title}
             </Link>
 
             <div style={{ marginLeft: 'auto' }}>
               <span style={{ fontSize: "1.1rem", color: "#666" }}>{t.dueDate}    </span>
-            <button className="btn" onClick={() => delMutation.mutate(t.id)}>✖</button>
+            <button className="btn" onClick={() => delMutation.mutate(t.id)}>🗑️</button>
             </div>
             
           </li>
@@ -134,12 +141,6 @@ if (!token) return null;
       </ul>
       </div>
     </main>
-
-    <div className="flex justify-center">
-      <button className="btn" onClick={() => { localStorage.removeItem("token"); location.href="/login"; }}>
-        ログアウト
-      </button>
-    </div>
   </div>
   );
 }

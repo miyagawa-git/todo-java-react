@@ -1,10 +1,9 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 
 import { useEffect } from "react";
 import { http } from "../lib/http";
-import { Checkbox } from "@/components/ui/checkbox.tsx";
 
 import type { Todo } from "@/api/models/Todo";
 
@@ -20,7 +19,7 @@ export default function TodoDetailPage() {
   });
   // 2) フォームを用意：defaultValues でformを空で開始
   // コンポーネントが最初に表示された瞬間、サーバーのデータはまだ無いため（data は undefined）
-  const { register, handleSubmit, reset, control} = useForm<Todo>({
+  const { register, handleSubmit, reset} = useForm<Todo>({
     defaultValues: { title: "", description: "", done: false ,priority: 0,  dueDate: "",},
   });
 
@@ -48,55 +47,36 @@ export default function TodoDetailPage() {
       <header className="app-container pt-8 pb-3">
       <h1>Edit Todo✏️</h1><br></br>
       </header>
-
+                    
+      <main className="app-container pb-10">
+    <div className="card">
       <form onSubmit={handleSubmit((d)=>update.mutate(d))} style={{ display:"grid", gap:8 }}>
-        <input {...register("title", { required: true })} />
-        <textarea {...register("description")} />
+        <input placeholder="タスク" {...register("title", { required: true })} />
+        <textarea  placeholder="備考" {...register("description")} />
 
-      <div className="flex items-center space-x-2">
       <div className="flex items-center gap-2">
+        <label htmlFor="priority" className="text-sm font-medium text-gray-700">
+          優先度：
+        </label>
         <select
         {...register("priority", { valueAsNumber: true })}
-          className="w-full"
+          className="border border-gray-300 rounded-md px-2 py-1"
         >
         <option value={0}>（なし）</option>
           <option value={1}>低</option>
           <option value={2}>中</option>
           <option value={3}>高</option>
         </select>
-        <Controller
-          name="done"
-          control={control}
-          render={({ field }) => (
-            <>
-              {/* label で包まず、きょうだいにする // checked={!!field.value}*/}
-              
-              <Checkbox
-                id="done"
-                className="cb-emerald"
-                type="button"
-                checked={field.value === true}
-                onCheckedChange={(v) => field.onChange(v === true)}
-                onBlur={field.onBlur}
-                name={field.name}
-                ref={field.ref}
-              />
-              <label htmlFor="done" className="select-none cursor-pointer">
-                 {field.value ? " 完了" : " 未完了"}
-              </label>
-            </>
-          )}
-        />
       </div>
-      </div>
-
         <div style={{ display:"flex", gap:8 }}>
           <button type="submit" className="btn">保存💾</button>
           <button type="button" className="btn" onClick={()=>reset(data)}>リセット🔄</button>
           <button type="submit" className="btn" onClick={()=>reset(data)}>戻る↩️</button>
         </div>
       </form>
-
     </div>
+    </main>
+    </div>
+
   );
 }
