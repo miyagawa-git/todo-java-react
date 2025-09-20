@@ -12,6 +12,7 @@ import { Toaster } from '@/components/ui/sonner';
 import RequireAuth from "./RequireAuth";
 import UserRegist from "./pages/UserRegistPage";
 import RegisterSent from "./pages/RegisterSent";
+import Layout from "./pages/Layout";
 
 const qc = new QueryClient();
 
@@ -20,13 +21,20 @@ const router = createBrowserRouter([
   { path: "/userRegist", element: <UserRegist /> },
   { path: "/registerSent", element: <RegisterSent /> },
   {
-      element: <RequireAuth />,//ログイン必要
-    children: [
-      { path: "/", element: <TodoListPage /> },
-      { path: "/todos/:id", element: <TodoDetailPage /> },
-    ],
-  },
+    element: <RequireAuth />,//ログイン必要
+      children: [
+      {
+        element: <Layout />, 
+        children: [
+        { path: "/", element: <TodoListPage /> },
+        { path: "/todos/:id", element: <TodoDetailPage /> },
+        ],
+      },
+      ]
+  }
 ]);
+
+
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
