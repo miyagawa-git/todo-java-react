@@ -51,6 +51,7 @@ public String registerUser(@RequestBody @Valid UserReq req) {
   u.setUsername(req.username());
   u.setPassword(passwordEncoder.encode(req.password())); // BCryptで暗号化
   u.setRoles("0"); 
+  //role未使用
 //  u.setRoles(req.roles()); 
   userMapper.insert(u);
   return "User registered";
