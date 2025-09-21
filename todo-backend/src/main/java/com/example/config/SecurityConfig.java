@@ -57,9 +57,12 @@ public SecurityConfig(CustomUserDetailsService uds, JwtService jwt) {
          // プリフライト許可
         .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
         .requestMatchers("/auth/**", "/v3/api-docs/**", "/swagger-ui/**").permitAll()
-//        .anyRequest().permitAll()
         .anyRequest().authenticated()
       )
+      // TODO:未認証アクセスは 401 を返すよう明示
+//      .exceptionHandling(ex -> ex.authenticationEntryPoint((req, res, e) -> {
+//        res.sendError(HttpServletResponse.SC_UNAUTHORIZED);
+//      }))
       .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class)
       .userDetailsService(uds)
       .build();
