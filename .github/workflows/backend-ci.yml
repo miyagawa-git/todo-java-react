@@ -22,8 +22,11 @@ jobs:
           java-version: '21'
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
-      - name: Build
-        run: ./gradlew build -x test
+      # テスト込みビルド（-x test を外す）
+      - name: Build (with tests)
+        run: ./gradlew clean build
 
-      # - name: Trigger Render Deploy (optional)
-      #   run: curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+      # テスト成功 & main への push のときだけ Render を起動
+      - name: Trigger Render Deploy
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && success()
+        run: curl -sSf -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}"
