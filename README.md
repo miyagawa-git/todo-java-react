@@ -37,6 +37,34 @@ JWT 認証、CI/CD、Docker、Render／Vercel による本番デプロイを含�
 - CI によってビルド → Docker コンテナ化 → Render / Vercel に自動デプロイ  
 ![システム図](https://github.com/user-attachments/assets/14c6c4e5-f7eb-4e52-9ddd-e9c43aae5d75)
 
+---
+
+## ER図
+
+```mermaid
+erDiagram
+  USERS ||--o{ TODOS : has
+
+  USERS {
+    int id PK
+    varchar(100) username "UNIQUE, NOT NULL"
+    varchar(255) password "NOT NULL"
+    varchar(255) roles "DEFAULT 'USER', NOT NULL"
+  }
+
+  TODOS {
+    int id PK
+    int user_id FK "NOT NULL -> users.id"
+    varchar(200) title "NOT NULL"
+    text description
+    boolean done "DEFAULT false, NOT NULL"
+    timestamptz created_at "DEFAULT now(), NOT NULL"
+    timestamptz updated_at "DEFAULT now(), NOT NULL"
+    smallint priority "DEFAULT 0, NOT NULL"
+    date due_date
+  }
+```
+---
 
 ## 🛠️ セットアップ / ローカルでの起動方法
 
@@ -79,6 +107,8 @@ CI/CD：GitHub Actions によるビルド → デプロイ
 Dockerfile によるイメージ作成
 
 Render / Vercel による本番デプロイ設計
+
+---
 
 🌐 公開（デモ / 本番）リンクとソースコード
 
