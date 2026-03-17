@@ -120,6 +120,8 @@ Render / Vercel による本番デプロイ設計
 環境変数の安全管理が必要
 無料枠利用環境ではコールドスタートや遅延が発生する可能性あり
 
+〜〜〜〜〜〜〜〜
+
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
@@ -141,6 +143,13 @@ type ValidationContext = {
   seenValues: Set<string>;
 };
 
+/**
+ * write stream へ1行安全に書き込む
+ *
+ * writer.write() が false を返した場合は、
+ * バッファが詰まり気味なので "drain" を待つ。
+ * 大量データでの書き込み時に重要。
+ */
 async function writeLineSafely(
   writer: fs.WriteStream,
   line: string
@@ -151,7 +160,10 @@ async function writeLineSafely(
 }
 
 /**
- * CSV出力用エスケープ
+ * エラーCSV出力用のエスケープ
+ *
+ * 値にカンマ・改行・ダブルクォートが含まれると
+ * CSVの列崩れを起こすので、その場合だけクオートで囲む。
  */
 function escapeCsv(value: string): string {
   if (
@@ -167,18 +179,12 @@ function escapeCsv(value: string): string {
 
 /**
  * 1列CSV前提の値正規化
- * - trim
- * - 両端クォート除去
- * - CSV内の "" を " に戻す
+ *
+ * 今回は「読み込みCSVにクオートなし」前提なので、
+ * 余計なCSV解析はせず trim のみ行う。
  */
 function normalizeSingleColumnValue(raw: string): string {
-  const trimmed = raw.trim();
-
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1).replace(/""/g, '"');
-  }
-
-  return trimmed;
+  return raw.trim();
 }
 
 /**
@@ -189,6 +195,10 @@ function normalizeSingleColumnValue(raw: string): string {
  * - 半角数字のみ
  * - 8桁固定
  * - 重複禁止
+ *
+ * 今回は「形式エラーがあっても重複チェックする」実装。
+ * もし「形式エラー時は重複チェックしない」なら
+ * errors.length === 0 のときだけ重複判定する。
  */
 function validateValue(
   value: string,
@@ -196,23 +206,23 @@ function validateValue(
 ): string[] {
   const errors: string[] = [];
 
+  // 必須チェック
   if (value.length === 0) {
     errors.push("値が空です");
     return errors;
   }
 
+  // 半角数字チェック
   if (!/^\d+$/.test(value)) {
     errors.push("半角数字のみ入力してください");
   }
 
+  // 桁数チェック
   if (value.length !== 8) {
     errors.push("8桁で入力してください");
   }
 
   // 重複チェック
-  // 方針:
-  // - 値が形式的に不正でも、重複仕様上チェックしたいなら実行
-  // - 「形式エラー時は重複判定しない」仕様なら if (errors.length === 0) で囲う
   if (context.seenValues.has(value)) {
     errors.push("値が重複しています");
   } else {
@@ -224,7 +234,15 @@ function validateValue(
 
 /**
  * 1列CSVをストリームで読み込み、
- * その場でチェックしてエラーCSVを生成する最速寄り版
+ * その場でチェックしてエラーCSVを生成する
+ *
+ * ポイント:
+ * - 全件を配列やMapにためない
+ * - 1行ずつ読む
+ * - 1行ずつ判定する
+ * - エラーがあればその場でCSV出力する
+ *
+ * そのため10万件規模でも比較的軽い。
  */
 export async function validateSingleColumnCsvFast(
   inputCsvPath: string,
@@ -233,53 +251,67 @@ export async function validateSingleColumnCsvFast(
 ): Promise<ProcessResult> {
   const { hasHeader = false, encoding = "utf8" } = options;
 
+  // 入力CSV読み込み用ストリーム
   const reader = fs.createReadStream(inputCsvPath, { encoding });
+
+  // 1行ずつ読むためのインターフェース
   const rl = readline.createInterface({
     input: reader,
     crlfDelay: Infinity,
   });
 
+  // エラーCSV書き込み用ストリーム
   const writer = fs.createWriteStream(errorCsvPath, { encoding: "utf8" });
 
-  let physicalLineNumber = 0;
-  let dataRowNumber = 0;
-  let errorCount = 0;
-  let duplicateCount = 0;
+  let physicalLineNumber = 0; // 実ファイル上の行番号
+  let dataRowNumber = 0;      // データ行番号（ヘッダ除外後）
+  let errorCount = 0;         // エラー件数
+  let duplicateCount = 0;     // 重複エラー件数
 
+  // 重複チェック用
   const context: ValidationContext = {
     seenValues: new Set<string>(),
   };
 
   try {
-    // ヘッダ出力
+    // エラーCSVのヘッダ行
     await writeLineSafely(writer, "rowNumber,errorMessage,value\n");
 
+    // 入力CSVを1行ずつ処理
     for await (const rawLine of rl) {
       physicalLineNumber++;
 
-      // 先頭ヘッダ行を読み飛ばし
+      // ヘッダありの場合、1行目はスキップ
       if (hasHeader && physicalLineNumber === 1) {
         continue;
       }
 
       dataRowNumber++;
 
+      // UTF-8 BOM対策
+      // 先頭行だけ BOM が付く可能性があるため除去
       const line =
         physicalLineNumber === 1 ? rawLine.replace(/^\uFEFF/, "") : rawLine;
 
+      // 値の整形
       const value = normalizeSingleColumnValue(line);
+
+      // バリデーション
       const errors = validateValue(value, context);
 
+      // エラーなしなら次へ
       if (errors.length === 0) {
         continue;
       }
 
+      // 重複エラー件数をカウント
       if (errors.includes("値が重複しています")) {
         duplicateCount++;
       }
 
       errorCount++;
 
+      // エラーCSVの1行を作る
       const outputLine =
         [
           dataRowNumber,
@@ -287,9 +319,11 @@ export async function validateSingleColumnCsvFast(
           escapeCsv(value),
         ].join(",") + "\n";
 
+      // エラーCSVへ書き込み
       await writeLineSafely(writer, outputLine);
     }
   } finally {
+    // 書き込み終了
     writer.end();
     await once(writer, "finish");
   }
@@ -310,6 +344,7 @@ async function main(): Promise<void> {
   const outputDir = path.resolve("./output");
   const errorCsvPath = path.join(outputDir, "error_records.csv");
 
+  // 出力先フォルダがなければ作る
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
@@ -331,260 +366,4 @@ if (require.main === module) {
     console.error("処理中にエラーが発生しました:", error);
     process.exit(1);
   });
-}
-
-
-----
-import * as fs from "fs";
-import * as readline from "readline";
-import * as path from "path";
-import { once } from "events";
-
-type ValidationError = {
-  rowNumber: number;
-  message: string;
-  value: string;
-};
-
-type CsvLoadOptions = {
-  hasHeader?: boolean;
-  encoding?: BufferEncoding;
-};
-
-type ValidationResult = {
-  totalCount: number;
-  errorCount: number;
-  errorCsvPath: string;
-};
-
-/**
- * 1列CSVを Map<行番号, 値> に読み込む
- *
- * 想定:
- * - 1行につき1項目
- * - ヘッダ有無はオプションで切替
- * - 100,000件程度を想定
- */
-export async function loadSingleColumnCsvToMap(
-  inputCsvPath: string,
-  options: CsvLoadOptions = {}
-): Promise<Map<number, string>> {
-  const { hasHeader = false, encoding = "utf8" } = options;
-
-  const recordMap = new Map<number, string>();
-
-  const stream = fs.createReadStream(inputCsvPath, { encoding });
-  const rl = readline.createInterface({
-    input: stream,
-    crlfDelay: Infinity,
-  });
-
-  let physicalLineNumber = 0;
-  let logicalRowNumber = 0;
-
-  for await (const rawLine of rl) {
-    physicalLineNumber++;
-
-    // 先頭行をヘッダとしてスキップ
-    if (hasHeader && physicalLineNumber === 1) {
-      continue;
-    }
-
-    // BOM除去
-    const line =
-      physicalLineNumber === 1 ? rawLine.replace(/^\uFEFF/, "") : rawLine;
-
-    logicalRowNumber++;
-
-    // 1列CSV想定なので1行全体を値として扱う
-    // 両端のダブルクォートがある場合は外す
-    const normalizedValue = normalizeSingleColumnValue(line);
-
-    recordMap.set(logicalRowNumber, normalizedValue);
-  }
-
-  return recordMap;
-}
-
-/**
- * 値の正規化
- * - 前後空白除去
- * - 両端のダブルクォート除去
- * - "" を " に戻す
- */
-function normalizeSingleColumnValue(value: string): string {
-  const trimmed = value.trim();
-
-  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
-    return trimmed.slice(1, -1).replace(/""/g, '"');
-  }
-
-  return trimmed;
-}
-
-/**
- * フォーマットチェック
- *
- * ここは業務要件に応じて差し替えてください。
- * 例として:
- * - 必須
- * - 半角数字のみ
- * - 8桁固定
- */
-function validateValue(value: string): string[] {
-  const errors: string[] = [];
-
-  if (value.length === 0) {
-    errors.push("値が空です");
-    return errors;
-  }
-
-  if (!/^\d+$/.test(value)) {
-    errors.push("半角数字のみ入力してください");
-  }
-
-  if (value.length !== 8) {
-    errors.push("8桁で入力してください");
-  }
-
-  return errors;
-}
-
-/**
- * CSVエスケープ
- */
-function escapeCsv(value: string): string {
-  if (value.includes('"') || value.includes(",") || value.includes("\n")) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
-
-/**
- * 書き込みバックプレッシャ対応
- */
-async function writeLineSafely(
-  writer: fs.WriteStream,
-  line: string
-): Promise<void> {
-  if (!writer.write(line)) {
-    await once(writer, "drain");
-  }
-}
-
-/**
- * Mapに読み込んだデータをフォーマットチェックし、
- * エラーCSVを逐次出力する
- */
-export async function validateMapAndCreateErrorCsv(
-  recordMap: Map<number, string>,
-  errorCsvPath: string
-): Promise<ValidationResult> {
-  const writer = fs.createWriteStream(errorCsvPath, {
-    encoding: "utf8",
-  });
-
-  let errorCount = 0;
-
-  try {
-    // ヘッダ
-    await writeLineSafely(writer, "rowNumber,errorMessage,value\n");
-
-    for (const [rowNumber, value] of recordMap) {
-      const errors = validateValue(value);
-
-      if (errors.length === 0) {
-        continue;
-      }
-
-      errorCount++;
-
-      const line = [
-        rowNumber,
-        escapeCsv(errors.join(" / ")),
-        escapeCsv(value),
-      ].join(",") + "\n";
-
-      await writeLineSafely(writer, line);
-    }
-  } finally {
-    writer.end();
-    await once(writer, "finish");
-  }
-
-  return {
-    totalCount: recordMap.size,
-    errorCount,
-    errorCsvPath,
-  };
-}
-
-/**
- * 一連の処理をまとめた関数
- */
-export async function processCsv(
-  inputCsvPath: string,
-  outputDir: string,
-  options: CsvLoadOptions = {}
-): Promise<ValidationResult> {
-  const recordMap = await loadSingleColumnCsvToMap(inputCsvPath, options);
-
-  const errorCsvPath = path.join(outputDir, "error_records.csv");
-
-  return validateMapAndCreateErrorCsv(recordMap, errorCsvPath);
-}
-
-/**
- * 実行例
- */
-async function main(): Promise<void> {
-  const inputCsvPath = path.resolve("./input.csv");
-  const outputDir = path.resolve("./output");
-
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
-
-  const result = await processCsv(inputCsvPath, outputDir, {
-    hasHeader: false,
-    encoding: "utf8",
-  });
-
-  console.log("処理結果:", result);
-}
-
-if (require.main === module) {
-  main().catch((error) => {
-    console.error("処理中にエラーが発生しました:", error);
-    process.exit(1);
-  });
-}
-
----
-function validateValueWithDuplicateCheck(
-  value: string,
-  seen: Set<string>
-): string[] {
-  const errors: string[] = [];
-
-  if (value.length === 0) {
-    errors.push("値が空です");
-    return errors;
-  }
-
-  if (!/^\d+$/.test(value)) {
-    errors.push("半角数字のみ入力してください");
-  }
-
-  if (value.length !== 8) {
-    errors.push("8桁で入力してください");
-  }
-
-  if (seen.has(value)) {
-    errors.push("値が重複しています");
-  } else {
-    seen.add(value);
-  }
-
-  return errors;
 }
