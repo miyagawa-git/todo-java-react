@@ -121,35 +121,43 @@ Render / Vercel による本番デプロイ設計
 無料枠利用環境ではコールドスタートや遅延が発生する可能性あり
 
 〜〜〜〜〜〜〜〜
-
 import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
 import { once } from "events";
 
-type CsvValidationOptions = {
-  hasHeader?: boolean;
+type InputFileDefinition = {
+  columnName: string;
+  filePath: string;
+  order: number;
+};
+
+type MergeCsvOptions = {
+  inputFiles: InputFileDefinition[];
+  outputPath: string;
   encoding?: BufferEncoding;
 };
 
-type ProcessResult = {
-  totalCount: number;
-  errorCount: number;
-  duplicateCount: number;
-  errorCsvPath: string;
+type CsvCursor = {
+  header: string;
+  nextValue: () => Promise<IteratorResult<string>>;
+  close: () => void;
 };
 
-type ValidationContext = {
-  seenValues: Set<string>;
-};
+const MAX_FILE_COUNT = 11;
 
-/**
- * write stream へ1行安全に書き込む
- *
- * writer.write() が false を返した場合は、
- * バッファが詰まり気味なので "drain" を待つ。
- * 大量データでの書き込み時に重要。
- */
+function escapeCsv(value: string): string {
+  if (
+    value.includes(",") ||
+    value.includes('"') ||
+    value.includes("\n") ||
+    value.includes("\r")
+  ) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
+}
+
 async function writeLineSafely(
   writer: fs.WriteStream,
   line: string
@@ -159,211 +167,166 @@ async function writeLineSafely(
   }
 }
 
-/**
- * エラーCSV出力用のエスケープ
- *
- * 値にカンマ・改行・ダブルクォートが含まれると
- * CSVの列崩れを起こすので、その場合だけクオートで囲む。
- */
-function escapeCsv(value: string): string {
-  if (
-    value.includes('"') ||
-    value.includes(",") ||
-    value.includes("\n") ||
-    value.includes("\r")
-  ) {
-    return `"${value.replace(/"/g, '""')}"`;
-  }
-  return value;
-}
+async function createCsvCursor(
+  filePath: string,
+  encoding: BufferEncoding
+): Promise<CsvCursor> {
+  const reader = fs.createReadStream(filePath, { encoding });
 
-/**
- * 1列CSV前提の値正規化
- *
- * 今回は「読み込みCSVにクオートなし」前提なので、
- * 余計なCSV解析はせず trim のみ行う。
- */
-function normalizeSingleColumnValue(raw: string): string {
-  return raw.trim();
-}
-
-/**
- * 形式チェック + 重複チェック
- *
- * 例:
- * - 必須
- * - 半角数字のみ
- * - 8桁固定
- * - 重複禁止
- *
- * 今回は「形式エラーがあっても重複チェックする」実装。
- * もし「形式エラー時は重複チェックしない」なら
- * errors.length === 0 のときだけ重複判定する。
- */
-function validateValue(
-  value: string,
-  context: ValidationContext
-): string[] {
-  const errors: string[] = [];
-
-  // 必須チェック
-  if (value.length === 0) {
-    errors.push("値が空です");
-    return errors;
-  }
-
-  // 半角数字チェック
-  if (!/^\d+$/.test(value)) {
-    errors.push("半角数字のみ入力してください");
-  }
-
-  // 桁数チェック
-  if (value.length !== 8) {
-    errors.push("8桁で入力してください");
-  }
-
-  // 重複チェック
-  if (context.seenValues.has(value)) {
-    errors.push("値が重複しています");
-  } else {
-    context.seenValues.add(value);
-  }
-
-  return errors;
-}
-
-/**
- * 1列CSVをストリームで読み込み、
- * その場でチェックしてエラーCSVを生成する
- *
- * ポイント:
- * - 全件を配列やMapにためない
- * - 1行ずつ読む
- * - 1行ずつ判定する
- * - エラーがあればその場でCSV出力する
- *
- * そのため10万件規模でも比較的軽い。
- */
-export async function validateSingleColumnCsvFast(
-  inputCsvPath: string,
-  errorCsvPath: string,
-  options: CsvValidationOptions = {}
-): Promise<ProcessResult> {
-  const { hasHeader = false, encoding = "utf8" } = options;
-
-  // 入力CSV読み込み用ストリーム
-  const reader = fs.createReadStream(inputCsvPath, { encoding });
-
-  // 1行ずつ読むためのインターフェース
   const rl = readline.createInterface({
     input: reader,
     crlfDelay: Infinity,
   });
 
-  // エラーCSV書き込み用ストリーム
-  const writer = fs.createWriteStream(errorCsvPath, { encoding: "utf8" });
+  const iterator = rl[Symbol.asyncIterator]();
 
-  let physicalLineNumber = 0; // 実ファイル上の行番号
-  let dataRowNumber = 0;      // データ行番号（ヘッダ除外後）
-  let errorCount = 0;         // エラー件数
-  let duplicateCount = 0;     // 重複エラー件数
+  const headerResult = await iterator.next();
+  if (headerResult.done || headerResult.value == null) {
+    rl.close();
+    reader.destroy();
+    throw new Error(`ファイルが空です: ${filePath}`);
+  }
 
-  // 重複チェック用
-  const context: ValidationContext = {
-    seenValues: new Set<string>(),
+  const header = headerResult.value.trim();
+
+  return {
+    header,
+    nextValue: async () => {
+      const result = await iterator.next();
+
+      if (result.done) {
+        return { done: true, value: undefined };
+      }
+
+      return {
+        done: false,
+        value: result.value.trimEnd(),
+      };
+    },
+    close: () => {
+      rl.close();
+      reader.destroy();
+    },
   };
+}
+
+async function mergeSingleColumnCsvFiles(
+  options: MergeCsvOptions
+): Promise<void> {
+  const encoding = options.encoding ?? "utf-8";
+  const outputPath = options.outputPath;
+
+  if (options.inputFiles.length === 0) {
+    throw new Error("入力ファイルが指定されていません。");
+  }
+
+  if (options.inputFiles.length > MAX_FILE_COUNT) {
+    throw new Error(
+      `入力ファイル数が上限を超えています。上限: ${MAX_FILE_COUNT}`
+    );
+  }
+
+  // order順に並べ替え
+  const sortedInputFiles = [...options.inputFiles].sort(
+    (a, b) => a.order - b.order
+  );
+
+  for (const inputFile of sortedInputFiles) {
+    if (!fs.existsSync(inputFile.filePath)) {
+      throw new Error(`入力ファイルが存在しません: ${inputFile.filePath}`);
+    }
+  }
+
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+  const writer = fs.createWriteStream(outputPath, { encoding });
+  const cursors: CsvCursor[] = [];
 
   try {
-    // エラーCSVのヘッダ行
-    await writeLineSafely(writer, "rowNumber,errorMessage,value\n");
+    for (const inputFile of sortedInputFiles) {
+      const cursor = await createCsvCursor(inputFile.filePath, encoding);
 
-    // 入力CSVを1行ずつ処理
-    for await (const rawLine of rl) {
-      physicalLineNumber++;
-
-      // ヘッダありの場合、1行目はスキップ
-      if (hasHeader && physicalLineNumber === 1) {
-        continue;
+      // 必要ならヘッダー名チェック
+      if (cursor.header !== inputFile.columnName) {
+        throw new Error(
+          `ヘッダー名が不一致です。file=${inputFile.filePath}, expected=${inputFile.columnName}, actual=${cursor.header}`
+        );
       }
 
-      dataRowNumber++;
+      cursors.push(cursor);
+    }
 
-      // UTF-8 BOM対策
-      // 先頭行だけ BOM が付く可能性があるため除去
-      const line =
-        physicalLineNumber === 1 ? rawLine.replace(/^\uFEFF/, "") : rawLine;
+    // 出力ヘッダーは order順で並ぶ
+    const outputHeaders = sortedInputFiles.map((file) =>
+      escapeCsv(file.columnName)
+    );
+    await writeLineSafely(writer, outputHeaders.join(",") + "\n");
 
-      // 値の整形
-      const value = normalizeSingleColumnValue(line);
+    let rowNumber = 2;
 
-      // バリデーション
-      const errors = validateValue(value, context);
+    while (true) {
+      const rowResults = await Promise.all(
+        cursors.map((cursor) => cursor.nextValue())
+      );
 
-      // エラーなしなら次へ
-      if (errors.length === 0) {
-        continue;
+      const doneCount = rowResults.filter((result) => result.done).length;
+
+      if (doneCount === rowResults.length) {
+        break;
       }
 
-      // 重複エラー件数をカウント
-      if (errors.includes("値が重複しています")) {
-        duplicateCount++;
+      if (doneCount > 0 && doneCount < rowResults.length) {
+        throw new Error(
+          `ファイルの行数が一致しません。CSV行番号: ${rowNumber}`
+        );
       }
 
-      errorCount++;
+      const mergedRow = rowResults
+        .map((result) => escapeCsv(result.value ?? ""))
+        .join(",");
 
-      // エラーCSVの1行を作る
-      const outputLine =
-        [
-          dataRowNumber,
-          escapeCsv(errors.join(" / ")),
-          escapeCsv(value),
-        ].join(",") + "\n";
-
-      // エラーCSVへ書き込み
-      await writeLineSafely(writer, outputLine);
+      await writeLineSafely(writer, mergedRow + "\n");
+      rowNumber++;
     }
   } finally {
-    // 書き込み終了
+    for (const cursor of cursors) {
+      cursor.close();
+    }
+
     writer.end();
     await once(writer, "finish");
   }
-
-  return {
-    totalCount: dataRowNumber,
-    errorCount,
-    duplicateCount,
-    errorCsvPath,
-  };
 }
 
-/**
- * 実行例
- */
 async function main(): Promise<void> {
-  const inputCsvPath = path.resolve("./input.csv");
-  const outputDir = path.resolve("./output");
-  const errorCsvPath = path.join(outputDir, "error_records.csv");
-
-  // 出力先フォルダがなければ作る
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
-
-  const result = await validateSingleColumnCsvFast(
-    inputCsvPath,
-    errorCsvPath,
+  const inputFiles: InputFileDefinition[] = [
     {
-      hasHeader: false,
-      encoding: "utf8",
-    }
-  );
+      columnName: "city",
+      filePath: "./input/city.csv",
+      order: 3,
+    },
+    {
+      columnName: "name",
+      filePath: "./input/name.csv",
+      order: 1,
+    },
+    {
+      columnName: "age",
+      filePath: "./input/age.csv",
+      order: 2,
+    },
+  ];
 
-  console.log("処理結果:", result);
-}
-
-if (require.main === module) {
-  main().catch((error) => {
-    console.error("処理中にエラーが発生しました:", error);
-    process.exit(1);
+  await mergeSingleColumnCsvFiles({
+    inputFiles,
+    outputPath: "./output/merged.csv",
   });
+
+  console.log("結合完了");
 }
+
+main().catch((error) => {
+  console.error("エラー:", error);
+  process.exit(1);
+});
+
